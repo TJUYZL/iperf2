@@ -180,6 +180,9 @@ const long kDefault_UDPRate = 1024 * 1024; // -u  if set, 1 Mbit/sec
 const int  kDefault_UDPBufLen = 1470;      // -u  if set, read/write 1470 bytes
 // 1470 bytes is small enough to be sending one packet per datagram on ethernet
 
+const long tcp_buflen_min = 4 * 1024;
+const long tcp_buflen_max = 256 * 1024;
+
 // 1450 bytes is small enough to be sending one packet per datagram on ethernet
 //  **** with IPv6 ****
 
@@ -196,7 +199,7 @@ void Settings_Initialize( thread_Settings *main ) {
     main->mReportMode = kReport_Default;
     // option, defaults
     main->flags         = FLAG_MODETIME | FLAG_STDOUT; // Default time and stdout
-    //main->mUDPRate      = 0;           // -b,  ie. TCP mode
+    //main->mRate         = 0;           // -b,  ie. TCP mode
     //main->mHost         = NULL;        // -c,  none, required for client
     main->mMode         = kTest_Normal;  // -d,  mMode == kTest_DualTest
     main->mFormat       = 'a';           // -f,  adaptive bits
@@ -211,7 +214,7 @@ void Settings_Initialize( thread_Settings *main ) {
     // mMode    = kTest_Normal;          // -r,  mMode == kTest_TradeOff
     main->mThreadMode   = kMode_Unknown; // -s,  or -c, none
     main->mAmount       = 1000;          // -t,  10 seconds
-    // mUDPRate > 0 means UDP            // -u,  N/A, see kDefault_UDPRate
+    // mRate > 0 means UDP               // -u,  N/A, see kDefault_UDPRate
     // skip version                      // -v,
     //main->mTCPWin       = 0;           // -w,  ie. don't set window
 
@@ -311,29 +314,37 @@ void Settings_ParseCommandLine( int argc, char **argv, thread_Settings *mSetting
 
 void Settings_Interpret( char option, const char *optarg, thread_Settings *mExtSettings ) {
     char outarg[100];
+    uint64_t rate;
 
     switch ( option ) {
         case '1': // Single Client
             setSingleClient( mExtSettings );
             break;
-        case 'b': // UDP bandwidth
-            if ( !isUDP( mExtSettings ) ) {
-                fprintf( stderr, warn_implied_udp, option );
-            }
-
+        case 'b': // UDP or TCP bandwidth
             if ( mExtSettings->mThreadMode != kMode_Client ) {
                 fprintf( stderr, warn_invalid_server_option, option );
                 break;
             }
 
             Settings_GetLowerCaseArg(optarg,outarg);
-            mExtSettings->mUDPRate = byte_atoi(outarg);
-            setUDP( mExtSettings );
+            rate = byte_atoi(outarg);
 
-            // if -l has already been processed, mBufLenSet is true
-            // so don't overwrite that value.
-            if ( !isBuflenSet( mExtSettings ) ) {
-                mExtSettings->mBufLen = kDefault_UDPBufLen;
+            if (isUDP( mExtSettings)) {
+                mExtSettings->mRate = rate;
+                // if -l has already been processed, mBufLenSet is true
+                // so don't overwrite that value.
+                if ( !isBuflenSet( mExtSettings ) ) {
+                    mExtSettings->mBufLen = kDefault_UDPBufLen;
+                }
+            } else {
+                mExtSettings->mRate = rate;
+                if ( !isBuflenSet( mExtSettings ) ) {
+                    mExtSettings->mBufLen = rate / 128;
+                    if (mExtSettings->mBufLen < tcp_buflen_min)
+                        mExtSettings->mBufLen = tcp_buflen_min;
+                    if (mExtSettings->mBufLen > tcp_buflen_max)
+                        mExtSettings->mBufLen = tcp_buflen_max;
+                }
             }
             break;
 
@@ -466,7 +477,7 @@ void Settings_Interpret( char option, const char *optarg, thread_Settings *mExtS
             // already be non-zero, so don't overwrite that value
             if ( !isUDP( mExtSettings ) ) {
                 setUDP( mExtSettings );
-                mExtSettings->mUDPRate = kDefault_UDPRate;
+                mExtSettings->mRate = kDefault_UDPRate;
             }
 
             // if -l has already been processed, mBufLenSet is true
@@ -759,9 +770,10 @@ void Settings_GenerateClientSettings( thread_Settings *server,
         if ( hdr->bufferlen != 0 ) {
             (*client)->mBufLen = ntohl(hdr->bufferlen);
         }
+        (*client)->mRate = ntohl(hdr->mRate);
         if ( hdr->mWinBand != 0 ) {
             if ( isUDP( server ) ) {
-                (*client)->mUDPRate = ntohl(hdr->mWinBand);
+                (*client)->mRate = ntohl(hdr->mWinBand);
             } else {
                 (*client)->mTCPWin = ntohl(hdr->mWinBand);
             }
@@ -820,8 +832,10 @@ void Settings_GenerateClientHdr( thread_Settings *client, client_hdr *hdr ) {
     } else {
         hdr->bufferlen = 0;
     }
+    
+    hdr->mRate  = htonl(client->mRate);
     if ( isUDP( client ) ) {
-        hdr->mWinBand  = htonl(client->mUDPRate);
+        hdr->mWinBand  = htonl(client->mRate);
     } else {
         hdr->mWinBand  = htonl(client->mTCPWin);
     }

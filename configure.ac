@@ -63,9 +63,10 @@ if test "$enable_threads" != no; then
     fi
 fi
 
-dnl check for -lnsl, -lsocket
+dnl check for -lnsl, -lsocket, -lrt
 AC_CHECK_FUNC(gethostbyname,,AC_CHECK_LIB(nsl, gethostbyname))
 AC_CHECK_FUNC(socket,,AC_CHECK_LIB(socket, socket))
+AC_CHECK_FUNC(clock_gettime,,AC_CHECK_LIB(rt, clock_gettime))
 
 dnl Checks for header files.
 AC_HEADER_STDC

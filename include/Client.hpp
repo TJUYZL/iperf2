@@ -70,7 +70,7 @@ public:
     void Run( void );
 
     // TCP specific version of above
-    void RunTCP( void );
+    void RunTCP(uint64_t bwlim);
 
     void InitiateServer();
 

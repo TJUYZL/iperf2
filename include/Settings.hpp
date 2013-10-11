@@ -154,7 +154,7 @@ typedef struct thread_Settings {
     ReportMode mReportMode;
     TestMode mMode;                 // -r or -d
     // Hopefully int64_t's
-    max_size_t mUDPRate;            // -b or -u
+    max_size_t mRate;		    // -b or -u
     max_size_t mAmount;             // -n or -t
     // doubles
     double mInterval;               // -i
@@ -333,6 +333,7 @@ typedef struct client_hdr {
     int32_t bufferlen;
     int32_t mWinBand;
     int32_t mAmount;
+    int32_t mRate;
 #else
     signed int flags      : 32;
     signed int numThreads : 32;
@@ -340,6 +341,7 @@ typedef struct client_hdr {
     signed int bufferlen  : 32;
     signed int mWinBand   : 32;
     signed int mAmount    : 32;
+    signed int mRate      : 32;
 #endif
 } client_hdr;
 

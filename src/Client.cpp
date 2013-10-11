@@ -61,6 +61,9 @@
 #include "util.h"
 #include "Locale.h"
 
+#include <time.h>
+#include <unistd.h>
+
 /* -------------------------------------------------------------------
  * Store server hostname, optionally local hostname, and socket info.
  * ------------------------------------------------------------------- */
@@ -115,7 +118,134 @@ Client::~Client() {
 const double kSecs_to_usecs = 1e6; 
 const int    kBytes_to_Bits = 8; 
 
-void Client::RunTCP( void ) {
+#ifndef ARRAY_SIZE
+# define ARRAY_SIZE(x)	(sizeof(x) / sizeof(x[0]))
+#endif
+
+static uint64_t tcp_throttle_time(void)
+{
+	struct timespec ts;
+	int rc;
+
+	rc = clock_gettime(CLOCK_MONOTONIC, &ts);
+	if (rc) {
+	    perror("clock_gettime");
+	    exit(1);
+	}
+
+	return ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+struct tcp_throttle_counter {
+	uint64_t accum_ns;
+	uint64_t bytes;
+	uint64_t ns_limit;
+	uint64_t bytes_limit;
+};
+
+struct tcp_throttle {
+	uint64_t time;
+	size_t ncounters;
+	double bps_limit;
+	struct tcp_throttle_counter counters[0];
+};
+
+static void tcp_throttle_counter_init(struct tcp_throttle_counter *tc, uint64_t time_limit, double bps_limit)
+{
+	tc->accum_ns = 0;
+	tc->bytes = 0;
+	tc->ns_limit = time_limit;
+	tc->bytes_limit = time_limit * bps_limit / 8000000000.0;
+}
+
+static struct tcp_throttle *__tcp_throttle_init(const uint64_t *time_limits, size_t len, double bps_limit)
+{
+	struct tcp_throttle *t;
+
+	t = (struct tcp_throttle *)malloc(sizeof(*t) + sizeof(t->counters[0]) * len);
+	if (t == NULL) {
+		return NULL;
+	}
+
+	t->time = tcp_throttle_time();
+	t->ncounters = len;
+	t->bps_limit = bps_limit;
+	for (unsigned int i = 0; i < len; i++) {
+		tcp_throttle_counter_init(&t->counters[i], time_limits[i], bps_limit);
+	}
+
+	return t;
+}
+
+static struct tcp_throttle *tcp_throttle_init(double bps_limit)
+{
+	const uint64_t million = 1000000;
+	const uint64_t billion = 1000000000;
+	const uint64_t timelims_ns[] = { 1 * million, 10 * million, 100 * million, 1 * billion, 10 * billion, 100 * billion };
+	return __tcp_throttle_init(timelims_ns, ARRAY_SIZE(timelims_ns), bps_limit);
+}
+
+static int tcp_throttle_counter_update(struct tcp_throttle_counter *tc, int64_t nsdiff, int bytes, double bps_limit)
+{
+	int throttle = 0;
+
+	tc->bytes += bytes;
+	tc->accum_ns += nsdiff;
+
+	if (tc->accum_ns) {
+		double bits_per_sec = tc->bytes * 8 * 1000000000 * 1.0 / tc->accum_ns;
+		if (bits_per_sec > bps_limit) {
+#if 0
+			printf("%s:%d:%s tc %p nsdiff %Lu thisbytes %d tot_bytes %Lu accum_ns %Lu ns_limit %Lu bytes_limit %Lu bits_per_sec %g bps_limit %g\n",
+				__FILE__, __LINE__, __FUNCTION__, tc, nsdiff, bytes, tc->bytes, tc->accum_ns, tc->ns_limit, tc->bytes_limit, bits_per_sec, bps_limit);
+#endif
+			throttle = 1;
+		}
+	}
+
+	if (tc->accum_ns >= tc->ns_limit || tc->bytes >= tc->bytes_limit) {
+		tc->bytes = 0;
+		tc->accum_ns = 0;
+	}
+
+	return throttle;
+}
+
+static int tcp_throttle_update(struct tcp_throttle *t, int bytes)
+{
+	int throttle = 0;
+	uint64_t timenow;
+	int64_t diff = -1;
+
+	timenow = tcp_throttle_time();
+	diff = timenow - t->time;
+	if (diff < 0) {
+		diff = 0;
+	}
+	t->time = timenow;
+	for (unsigned int i = 0; i < t->ncounters; i++) {
+		throttle |= tcp_throttle_counter_update(&t->counters[i], diff, bytes, t->bps_limit);
+	}
+
+	return throttle;
+}
+
+static void tcp_throttle_pause(struct tcp_throttle *t, int bytes)
+{
+	int throttle_restrict;
+
+	if (t->bps_limit == 0) {
+		return;
+	}
+
+	throttle_restrict = tcp_throttle_update(t, bytes);
+	while (throttle_restrict) {
+		usleep(1000);
+		throttle_restrict = tcp_throttle_update(t, 0);
+	}
+}
+
+void Client::RunTCP(uint64_t tcp_rate) {
     unsigned long currLen = 0; 
     struct itimerval it;
     max_size_t totLen = 0;
@@ -128,6 +258,8 @@ void Client::RunTCP( void ) {
     bool canRead = true, mMode_Time = isModeTime( mSettings ); 
 
     ReportStruct *reportstruct = NULL;
+
+    struct tcp_throttle *throttle;
 
     // InitReport handles Barrier for multiple Streams
     mSettings->reporthdr = InitReport( mSettings );
@@ -146,6 +278,13 @@ void Client::RunTCP( void ) {
 	    exit(1);
 	}
     }
+
+    throttle = tcp_throttle_init(tcp_rate);
+    if (throttle == NULL) {
+        perror("malloc throttle");
+        exit(1);
+    }
+
     do {
         // Read the next data block from 
         // the file if it's file input 
@@ -162,6 +301,8 @@ void Client::RunTCP( void ) {
             break; 
         }
 	totLen += currLen;
+
+	tcp_throttle_pause(throttle, currLen);
 
 	if(mSettings->mInterval > 0) {
     	    gettimeofday( &(reportstruct->packetTime), NULL );
@@ -180,6 +321,8 @@ void Client::RunTCP( void ) {
 
     } while ( ! (sInterupted  || 
                    (!mMode_Time  &&  0 >= mSettings->mAmount)) && canRead ); 
+
+	free(throttle);
 
     // stop timing
     gettimeofday( &(reportstruct->packetTime), NULL );
@@ -213,8 +356,8 @@ void Client::Run( void ) {
 
 #if HAVE_THREAD
     if ( !isUDP( mSettings ) ) {
-	RunTCP();
-	return;
+        RunTCP(mSettings->mRate);
+        return;
     }
 #endif
     
@@ -234,7 +377,7 @@ void Client::Run( void ) {
     
         // compute delay for bandwidth restriction, constrained to [0,1] seconds 
         delay_target = (int) ( mSettings->mBufLen * ((kSecs_to_usecs * kBytes_to_Bits) 
-                                                     / mSettings->mUDPRate) ); 
+                                                     / mSettings->mRate) ); 
         if ( delay_target < 0  || 
              delay_target > (int) 1 * kSecs_to_usecs ) {
             fprintf( stderr, warn_delay_large, delay_target / kSecs_to_usecs ); 
