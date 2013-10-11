@@ -158,6 +158,9 @@ const char client_port[] =
 const char bind_address[] =
 "Binding to local address %s\n";
 
+const char multicast_ipv6_if[] =
+"Setting IPv6 multicast interface to %s, index %u\n";
+
 const char multicast_ttl[] =
 "Setting multicast TTL to %d\n";
 

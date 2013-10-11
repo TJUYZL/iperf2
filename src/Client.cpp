@@ -419,6 +419,10 @@ void Client::Connect( ) {
                  &mSettings->size_local );
     getpeername( mSettings->mSock, (sockaddr*) &mSettings->peer,
                  &mSettings->size_peer );
+
+#ifdef HAVE_IPV6_MULTICAST
+    SetIPv6MulticastInterface( mSettings );
+#endif
 } // end Connect
 
 /* ------------------------------------------------------------------- 

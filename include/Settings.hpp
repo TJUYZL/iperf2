@@ -117,6 +117,7 @@ typedef struct thread_Settings {
     MultiHeader*   multihdr;
     struct thread_Settings *runNow;
     struct thread_Settings *runNext;
+    unsigned int mIPv6MulticastInterface;
     // int's
     int mThreads;                   // -P
     int mTOS;                       // -S

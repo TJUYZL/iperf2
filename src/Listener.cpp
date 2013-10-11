@@ -334,6 +334,10 @@ void Listener::Listen( ) {
     {
         rc = bind( mSettings->mSock, (sockaddr*) &mSettings->local, mSettings->size_local );
         WARN_errno( rc == SOCKET_ERROR, "bind" );
+
+#ifdef HAVE_IPV6_MULTICAST
+        SetIPv6MulticastInterface( mSettings );
+#endif
     }
     // listen for connections (TCP only).
     // default backlog traditionally 5
@@ -375,7 +379,7 @@ void Listener::McastJoin( ) {
         memcpy( &mreq.ipv6mr_multiaddr, SockAddr_get_in6_addr( &mSettings->local ), 
                 sizeof(mreq.ipv6mr_multiaddr));
 
-        mreq.ipv6mr_interface = 0;
+        mreq.ipv6mr_interface = mSettings->mIPv6MulticastInterface;
 
         int rc = setsockopt( mSettings->mSock, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP,
                              (char*) &mreq, sizeof(mreq));

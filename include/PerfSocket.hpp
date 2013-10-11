@@ -60,6 +60,7 @@
 #include "Settings.hpp"
 
     void SetSocketOptions( thread_Settings *inSettings );
+    void SetIPv6MulticastInterface( thread_Settings *inSettings );
 
     // handle interupts
     void Sig_Interupt( int inSigno );
