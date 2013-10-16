@@ -180,7 +180,8 @@ static int cmp_bits(const uint8_t *a, const uint8_t *b, unsigned int bits)
 	return 0;
 }
 
-void FindIPv6MulticastInterface( thread_Settings *inSettings ) {
+int FindIPv6MulticastInterface( thread_Settings *inSettings ) {
+	int ret = -1;
 #ifdef HAVE_IPV6_MULTICAST
 	struct sockaddr_nl me;
 	struct sockaddr_nl them;
@@ -215,7 +216,7 @@ void FindIPv6MulticastInterface( thread_Settings *inSettings ) {
 		const struct in6_addr *src_ip6 = SockAddr_get_in6_addr(&inSettings->local);
 		cmp_ip6 = src_ip6;
 	} else {
-		return;
+		return ret;
 	}
 
 	if ((rtnl_socket = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE)) < 0) {
@@ -296,6 +297,7 @@ void FindIPv6MulticastInterface( thread_Settings *inSettings ) {
 				unsigned int ipv6_multicast_if;
 				ipv6_multicast_if = *((unsigned int *) RTA_DATA(rtap));
 				inSettings->mIPv6MulticastInterface = ipv6_multicast_if;
+				ret = 0;
 				goto out;
 			}
 		}
@@ -307,13 +309,16 @@ out:
 	}
 	delete [] reply_buf;
 #endif
+	return ret;
 }
 // end FindIPv6MulticastInterface
 
 void SetIPv6MulticastInterface( thread_Settings *inSettings )
 {
 #ifdef HAVE_IPV6_MULTICAST
-	FindIPv6MulticastInterface(inSettings);
+	if (FindIPv6MulticastInterface(inSettings)) {
+		return;
+	}
 	unsigned int ipv6_multicast_if = inSettings->mIPv6MulticastInterface;
 	int rc;
 	char ifname[32];
